@@ -62,5 +62,144 @@ while True:
     temp += 1
     humi += 1
     light_intesity += 1
-    client.publish('esp/telemetry', json.dumps(collect_data), 1)
+    client.publish('#define LED_PIN 48
+#define SDA_PIN GPIO_NUM_11
+#define SCL_PIN GPIO_NUM_12
+
+#include <WiFi.h>
+#include <PubSubClient.h>
+#include "DHT20.h"
+#include "Wire.h"
+
+constexpr char WIFI_SSID[] = "DOAN-HOI CSE";
+constexpr char WIFI_PASSWORD[] = "Doanhoilanha";
+
+constexpr char TOKEN[] = "8JFElEYTWYZzJzFMbk6m";
+
+constexpr char THINGSBOARD_SERVER[] = "app.coreiot.io";
+constexpr uint16_t THINGSBOARD_PORT = 1883U;
+
+constexpr uint32_t SERIAL_DEBUG_BAUD = 115200U;
+
+constexpr char LED_STATE_ATTR[] = "ledState";
+
+volatile bool attributesChanged = false;
+volatile bool ledState = false;
+
+constexpr int16_t telemetrySendInterval = 10000U;
+uint32_t previousDataSend;
+
+WiFiClient wifiClient;
+PubSubClient mqttClient(wifiClient);
+
+DHT20 dht20;
+
+void callback(char* topic, byte* payload, unsigned int length) {
+  Serial.print("Message arrived [");
+  Serial.print(topic);
+  Serial.print("]: ");
+  String message;
+  for (int i = 0; i < length; i++) {
+    message += (char)payload[i];
+  }
+  Serial.println(message);
+}
+
+void InitWiFi() {
+  Serial.println("Connecting to AP ...");
+  WiFi.begin(WIFI_SSID, WIFI_PASSWORD);
+  while (WiFi.status() != WL_CONNECTED) {
+    delay(500);
+    Serial.print(".");
+  }
+  Serial.println("Connected to AP");
+}
+
+const bool reconnect() {
+  const wl_status_t status = WiFi.status();
+  if (status == WL_CONNECTED) {
+    return true;
+  }
+  InitWiFi();
+  return true;
+}
+
+void connectMQTT() {
+  while (!mqttClient.connected()) {
+    Serial.println("Connecting MQTT...");
+    if (mqttClient.connect("ESP32_Device", TOKEN, "")) {
+      Serial.println("MQTT Connected!");
+      mqttClient.subscribe("v1/devices/me/rpc/request/+");
+    } else {
+      Serial.print("Failed, rc=");
+      Serial.println(mqttClient.state());
+      delay(5000);
+    }
+  }
+}
+
+void setup() {
+  Serial.begin(SERIAL_DEBUG_BAUD);
+  pinMode(LED_PIN, OUTPUT);
+  delay(1000);
+  InitWiFi();
+
+  mqttClient.setServer(THINGSBOARD_SERVER, THINGSBOARD_PORT);
+  mqttClient.setCallback(callback);
+
+  Wire.begin(SDA_PIN, SCL_PIN);
+  delay(100);
+  dht20.begin();
+}
+
+void loop() {
+  delay(10);
+
+  if (!reconnect()) return;
+
+  if (!mqttClient.connected()) {
+    connectMQTT();
+  }
+  mqttClient.loop();
+
+  if (millis() - previousDataSend > telemetrySendInterval) {
+    previousDataSend = millis();
+
+    dht20.read();
+    float temperature = dht20.getTemperature();
+    float humidity = dht20.getHumidity();
+
+    if (isnan(temperature) || isnan(humidity)) {
+      Serial.println("Failed to read from DHT20 sensor!");
+    } else {
+      Serial.print("Temperature: ");
+      Serial.print(temperature);
+      Serial.print(" °C, Humidity: ");
+      Serial.print(humidity);
+      Serial.println(" %");
+
+      // Gửi telemetry giống Python publish
+      char payload[128];
+      snprintf(payload, sizeof(payload),
+        "{\"temperature\":%.2f,\"humidity\":%.2f}",
+        temperature, humidity);
+
+      Serial.print("Publishing: ");
+      Serial.println(payload);
+
+      bool ok = mqttClient.publish("v1/devices/me/telemetry", payload);
+      Serial.println(ok ? "Publish OK!" : "Publish FAILED!");
+    }
+
+    // Gửi attributes
+    char attrPayload[256];
+    snprintf(attrPayload, sizeof(attrPayload),
+      "{\"rssi\":%d,\"channel\":%d,\"localIp\":\"%s\",\"ssid\":\"%s\",\"macAddress\":\"%s\"}",
+      WiFi.RSSI(), WiFi.channel(),
+      WiFi.localIP().toString().c_str(),
+      WiFi.SSID().c_str(),
+      WiFi.macAddress().c_str());
+    mqttClient.publish("v1/devices/me/attributes", attrPayload);
+  }
+}', json.dumps(collect_data), 1)
     time.sleep(5)
