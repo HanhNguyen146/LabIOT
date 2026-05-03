@@ -25,6 +25,10 @@ void TaskLEDControl(void *pvParameters) {
     
     // --- TRACKING STATE CHANGE CỦA MANUAL OVERRIDE ---
     bool prevManualOverride = false;
+    
+    // === SERVER CONTROL TRACKING ===
+    bool serverControlActive = false;
+    LedCommandType lastServerCmd = LED_CMD_NONE;
 
     while(1) {
         // 1. Khởi tạo biến cục bộ với giá trị an toàn mặc định
@@ -35,6 +39,10 @@ void TaskLEDControl(void *pvParameters) {
         bool manualOverride = false;
         bool manualLedState = false;
         uint32_t lastManualLedTick = 0;
+        
+        // === CHECK SERVER COMMAND (Priority) ===
+        LedCommandType serverCmd = LED_CMD_NONE;
+        uint32_t serverCmdTimestamp = 0;
 
         // --- ĐỌC DỮ LIỆU & NGƯỠNG ĐỘNG + MANUAL OVERRIDE BẰNG MUTEX ---
         if (xSemaphoreTake(data->dataMutex, pdMS_TO_TICKS(10)) == pdTRUE) {
@@ -44,6 +52,13 @@ void TaskLEDControl(void *pvParameters) {
             // Đọc các ngưỡng cảnh báo mới nhất do Web Server cài đặt
             tWarn = data->tempWarning;
             tCrit = data->tempCritical;
+            
+            // === KIỂM TRA SERVER COMMAND ===
+            if (data->ledCommand.type != LED_CMD_NONE) {
+                serverCmd = data->ledCommand.type;
+                serverCmdTimestamp = data->ledCommand.timestamp;
+                data->ledCommand.type = LED_CMD_NONE;  // Clear after reading
+            }
             
             // --- KIỂM TRA MANUAL OVERRIDE VÀ TIMEOUT ---
             manualOverride = data->manualLedOverride;
@@ -57,6 +72,49 @@ void TaskLEDControl(void *pvParameters) {
             }
             
             xSemaphoreGive(data->dataMutex);
+        }
+
+        // === XỬ LÝ SERVER COMMAND (Priority cao hơn FSM) ===
+        if (serverCmd != LED_CMD_NONE) {
+            serverControlActive = true;
+            lastServerCmd = serverCmd;
+            Serial.printf("[LEDCTRL] Server command received: %d\n", serverCmd);
+            
+            switch (serverCmd) {
+                case LED_CMD_ON:
+                    digitalWrite(GPIO_NUM_48, HIGH);
+                    vTaskDelay(pdMS_TO_TICKS(50));
+                    continue;
+                case LED_CMD_OFF:
+                    digitalWrite(GPIO_NUM_48, LOW);
+                    vTaskDelay(pdMS_TO_TICKS(50));
+                    continue;
+                case LED_CMD_AUTO:
+                    serverControlActive = false;
+                    Serial.println("[LEDCTRL] Returning to FSM control");
+                    break;
+                default:
+                    break;
+            }
+        }
+        
+        // Nếu server control aktif, maintain state (unless timeout)
+        if (serverControlActive) {
+            uint32_t elapsed = xTaskGetTickCount() - serverCmdTimestamp;
+            if (elapsed < pdMS_TO_TICKS(data->SERVER_CMD_TIMEOUT_MS)) {
+                // Still in server control
+                if (lastServerCmd == LED_CMD_ON) {
+                    digitalWrite(GPIO_NUM_48, HIGH);
+                } else if (lastServerCmd == LED_CMD_OFF) {
+                    digitalWrite(GPIO_NUM_48, LOW);
+                }
+                vTaskDelay(pdMS_TO_TICKS(50));
+                continue;
+            } else {
+                // Timeout - revert to auto
+                serverControlActive = false;
+                Serial.println("[LEDCTRL] Server control timeout - back to FSM");
+            }
         }
 
         // --- DETECT STATE CHANGE: OVERRIDE BẬT/TẮT ---
@@ -161,6 +219,11 @@ void neo_blinky(void *pvParameters) {
 
     bool errorBlinkState = false;
     uint32_t errorBlinkTimer = 0;
+    
+    // === SERVER CONTROL TRACKING ===
+    bool serverControlActive = false;
+    NeoCommandType lastServerCmd = NEO_CMD_NONE;
+    uint8_t serverR = 0, serverG = 0, serverB = 0;
 
     while(1) {
         // Khởi tạo biến cục bộ với giá trị an toàn mặc định
@@ -168,6 +231,11 @@ void neo_blinky(void *pvParameters) {
         float hDry = 40.0f;
         float hDamp = 70.0f;
         uint32_t lastUpdate = 0;
+        
+        // === CHECK SERVER COMMAND (Priority) ===
+        NeoCommandType serverCmd = NEO_CMD_NONE;
+        uint8_t serverCmdR = 0, serverCmdG = 0, serverCmdB = 0;
+        uint32_t serverCmdTimestamp = 0;
 
         // --- 1. LẤY DỮ LIỆU CỰC NHANH VÀ ĐỌC NGƯỠNG ĐỘNG BẰNG MUTEX ---
         if (xSemaphoreTake(data->dataMutex, pdMS_TO_TICKS(10)) == pdTRUE) {
@@ -178,7 +246,63 @@ void neo_blinky(void *pvParameters) {
             hDry = data->humDry;
             hDamp = data->humDamp;
             
+            // === KIỂM TRA SERVER COMMAND ===
+            if (data->neoCommand.type != NEO_CMD_NONE) {
+                serverCmd = data->neoCommand.type;
+                serverCmdR = data->neoCommand.r;
+                serverCmdG = data->neoCommand.g;
+                serverCmdB = data->neoCommand.b;
+                serverCmdTimestamp = data->neoCommand.timestamp;
+                data->neoCommand.type = NEO_CMD_NONE;  // Clear after reading
+            }
+            
             xSemaphoreGive(data->dataMutex);
+        }
+        
+        // === XỬ LÝ SERVER COMMAND (Priority cao hơn FSM) ===
+        if (serverCmd != NEO_CMD_NONE) {
+            serverControlActive = true;
+            lastServerCmd = serverCmd;
+            serverR = serverCmdR;
+            serverG = serverCmdG;
+            serverB = serverCmdB;
+            Serial.printf("[NEO_CMD] Server command received: %d (RGB=%d,%d,%d)\n", serverCmd, serverCmdR, serverCmdG, serverCmdB);
+            
+            switch (serverCmd) {
+                case NEO_CMD_CUSTOM_COLOR:
+                    targR = serverCmdR;
+                    targG = serverCmdG;
+                    targB = serverCmdB;
+                    break;
+                case NEO_CMD_AUTO:
+                    serverControlActive = false;
+                    Serial.println("[NEO_CMD] Returning to FSM control");
+                    break;
+                default:
+                    break;
+            }
+        }
+        
+        // Nếu server control aktif, maintain state (unless timeout)
+        if (serverControlActive) {
+            uint32_t elapsed = xTaskGetTickCount() - serverCmdTimestamp;
+            if (elapsed < pdMS_TO_TICKS(data->SERVER_CMD_TIMEOUT_MS)) {
+                // Still in server control - use smooth LERP
+                if (lastServerCmd == NEO_CMD_CUSTOM_COLOR) {
+                    if (currR < targR) currR++; else if (currR > targR) currR--;
+                    if (currG < targG) currG++; else if (currG > targG) currG--;
+                    if (currB < targB) currB++; else if (currB > targB) currB--;
+                    strip.setPixelColor(0, strip.Color(currR, currG, currB));
+                    strip.show();
+                }
+                vTaskDelay(pdMS_TO_TICKS(20));
+                continue;
+            } else {
+                // Timeout - revert to auto
+                serverControlActive = false;
+                currR = 0; currG = 0; currB = 0;
+                Serial.println("[NEO_CMD] Server control timeout - back to FSM");
+            }
         }
 
         // --- 2. XÁC ĐỊNH TRẠNG THÁI (MAPPING) VỚI NGƯỠNG ĐỘNG ---
@@ -242,5 +366,46 @@ void neo_blinky(void *pvParameters) {
         strip.show(); 
 
         vTaskDelay(pdMS_TO_TICKS(20)); 
+    }
+}
+
+// ==========================================
+// === SERVER CONTROL FUNCTIONS ===
+// ==========================================
+
+void sendLedCommand(SensorData* data, LedCommandType cmd) {
+    if (data == NULL || data->dataMutex == NULL) return;
+    
+    if (xSemaphoreTake(data->dataMutex, pdMS_TO_TICKS(50)) == pdTRUE) {
+        data->ledCommand.type = cmd;
+        data->ledCommand.timestamp = xTaskGetTickCount();
+        xSemaphoreGive(data->dataMutex);
+        
+        // Signal LED task to process command immediately
+        if (data->ledCommandSemaphore != NULL) {
+            xSemaphoreGive(data->ledCommandSemaphore);
+        }
+        
+        Serial.printf("[LED_CMD] Server sent command: %d\n", cmd);
+    }
+}
+
+void sendNeoCommand(SensorData* data, NeoCommandType cmd, uint8_t r, uint8_t g, uint8_t b) {
+    if (data == NULL || data->dataMutex == NULL) return;
+    
+    if (xSemaphoreTake(data->dataMutex, pdMS_TO_TICKS(50)) == pdTRUE) {
+        data->neoCommand.type = cmd;
+        data->neoCommand.r = r;
+        data->neoCommand.g = g;
+        data->neoCommand.b = b;
+        data->neoCommand.timestamp = xTaskGetTickCount();
+        xSemaphoreGive(data->dataMutex);
+        
+        // Signal NEO task to process command immediately
+        if (data->neoCommandSemaphore != NULL) {
+            xSemaphoreGive(data->neoCommandSemaphore);
+        }
+        
+        Serial.printf("[NEO_CMD] Server sent command: %d (RGB=%d,%d,%d)\n", cmd, r, g, b);
     }
 }
