@@ -1,8 +1,12 @@
 #include "task_webserver.h"
 #include "task_check_info.h"
+#include "task_actuator.h"
 
 AsyncWebServer server(80);
 AsyncWebSocket ws("/ws");
+
+// === GLOBAL POINTER FOR LED/NEO CONTROL ===
+SensorData* g_sharedDataPtr = nullptr;
 
 bool isAPMode = true;
 
@@ -185,6 +189,14 @@ void parseWebSocketMessage(AsyncWebSocketClient *client, const String &message)
         // Xử lý toggle motor/fan
         handleToggleDevice(message);
     }
+    else if (message.startsWith("{\"action\":\"led_control\"")) {
+        // Xử lý điều khiển LED
+        handleLedControl(client, message);
+    }
+    else if (message.startsWith("{\"action\":\"neo_control\"")) {
+        // Xử lý điều khiển NeoPixel
+        handleNeoControl(client, message);
+    }
 }
 
 // Xử lý lệnh toggle fan1/fan2 qua WebSocket
@@ -227,6 +239,108 @@ void handleToggleDevice(const String &message)
         sendDeviceFaultMessage(device, state->desired, state->actual);
     }
     sendDeviceSyncMessage(device, state->desired, state->actual, state->fault);
+}
+
+// === XỬ LÝ ĐIỀU KHIỂN LED TỪ SERVER ===
+void handleLedControl(AsyncWebSocketClient *client, const String &message)
+{
+    JsonDocument doc;
+    DeserializationError error = deserializeJson(doc, message);
+    if (error)
+    {
+        Serial.print("JSON parsing failed (LED control): ");
+        Serial.println(error.c_str());
+        return;
+    }
+
+    // Lấy SensorData từ client data (cần thêm vào global)
+    // Để đơn giản, ta gọi từ global sharedDataPtr
+    extern SensorData* g_sharedDataPtr;  // Khai báo global này ở đâu đó
+    if (g_sharedDataPtr == NULL) {
+        Serial.println("ERROR: g_sharedDataPtr is NULL!");
+        return;
+    }
+
+    const char* cmd = doc["cmd"];
+    if (cmd == nullptr) {
+        Serial.println("Missing 'cmd' field in LED control");
+        return;
+    }
+
+    LedCommandType ledCmd = LED_CMD_NONE;
+    if (strcmp(cmd, "on") == 0) {
+        ledCmd = LED_CMD_ON;
+    } else if (strcmp(cmd, "off") == 0) {
+        ledCmd = LED_CMD_OFF;
+    } else if (strcmp(cmd, "auto") == 0) {
+        ledCmd = LED_CMD_AUTO;
+    } else {
+        Serial.printf("Unknown LED command: %s\n", cmd);
+        return;
+    }
+
+    sendLedCommand(g_sharedDataPtr, ledCmd);
+
+    // Send ACK to client
+    JsonDocument resp;
+    resp["type"] = "led_control_ack";
+    resp["cmd"] = cmd;
+    resp["success"] = true;
+    String respBuf;
+    serializeJson(resp, respBuf);
+    sendWebSocketMessage(respBuf);
+}
+
+// === XỬ LÝ ĐIỀU KHIỂN NEOPIXEL TỪ SERVER ===
+void handleNeoControl(AsyncWebSocketClient *client, const String &message)
+{
+    JsonDocument doc;
+    DeserializationError error = deserializeJson(doc, message);
+    if (error)
+    {
+        Serial.print("JSON parsing failed (NEO control): ");
+        Serial.println(error.c_str());
+        return;
+    }
+
+    extern SensorData* g_sharedDataPtr;
+    if (g_sharedDataPtr == NULL) {
+        Serial.println("ERROR: g_sharedDataPtr is NULL!");
+        return;
+    }
+
+    const char* cmd = doc["cmd"];
+    if (cmd == nullptr) {
+        Serial.println("Missing 'cmd' field in NEO control");
+        return;
+    }
+
+    NeoCommandType neoCmd = NEO_CMD_NONE;
+    uint8_t r = 0, g = 0, b = 0;
+
+    if (strcmp(cmd, "color") == 0) {
+        neoCmd = NEO_CMD_CUSTOM_COLOR;
+        r = doc["r"] | 0;
+        g = doc["g"] | 0;
+        b = doc["b"] | 0;
+        Serial.printf("NEO Custom Color: R=%d G=%d B=%d\n", r, g, b);
+    } else if (strcmp(cmd, "auto") == 0) {
+        neoCmd = NEO_CMD_AUTO;
+    } else {
+        Serial.printf("Unknown NEO command: %s\n", cmd);
+        return;
+    }
+
+    sendNeoCommand(g_sharedDataPtr, neoCmd, r, g, b);
+
+    // Send ACK to client
+    JsonDocument resp;
+    resp["type"] = "neo_control_ack";
+    resp["cmd"] = cmd;
+    resp["success"] = true;
+    String respBuf;
+    serializeJson(resp, respBuf);
+    sendWebSocketMessage(respBuf);
 }
 
 void handleWifiConfig(AsyncWebSocketClient *client, const String &message) {
@@ -518,6 +632,94 @@ void initWebServer()
     // Định nghĩa serveStatic cho tất cả các đường dẫn tĩnh
     server.serveStatic("/", LittleFS, "/").setDefaultFile("index.html");
 
+    // API: LED control via HTTP POST
+    server.on("/api/led/control", HTTP_POST, [](AsyncWebServerRequest *request){
+        const AsyncWebParameter* p = request->getParam("plain", true);
+        if (p == nullptr) {
+            request->send(400, "application/json", "{\"error\":\"missing body\"}");
+            return;
+        }
+        String body = p->value();
+        JsonDocument doc;
+        DeserializationError err = deserializeJson(doc, body);
+        if (err) {
+            request->send(400, "application/json", "{\"error\":\"invalid json\"}");
+            return;
+        }
+        const char* cmd = doc["cmd"];
+        if (cmd == nullptr) {
+            request->send(400, "application/json", "{\"error\":\"missing cmd\"}");
+            return;
+        }
+        LedCommandType ledCmd = LED_CMD_NONE;
+        if (strcmp(cmd, "on") == 0) ledCmd = LED_CMD_ON;
+        else if (strcmp(cmd, "off") == 0) ledCmd = LED_CMD_OFF;
+        else if (strcmp(cmd, "auto") == 0) ledCmd = LED_CMD_AUTO;
+        else {
+            request->send(400, "application/json", "{\"error\":\"unknown cmd\"}");
+            return;
+        }
+        if (g_sharedDataPtr == nullptr) {
+            request->send(500, "application/json", "{\"error\":\"server not ready\"}");
+            return;
+        }
+        sendLedCommand(g_sharedDataPtr, ledCmd);
+        JsonDocument resp;
+        resp["success"] = true;
+        resp["cmd"] = cmd;
+        String respBuf;
+        serializeJson(resp, respBuf);
+        request->send(200, "application/json", respBuf);
+    });
+
+    // API: NeoPixel control via HTTP POST
+    server.on("/api/neo/control", HTTP_POST, [](AsyncWebServerRequest *request){
+        const AsyncWebParameter* p = request->getParam("plain", true);
+        if (p == nullptr) {
+            request->send(400, "application/json", "{\"error\":\"missing body\"}");
+            return;
+        }
+        String body = p->value();
+        JsonDocument doc;
+        DeserializationError err = deserializeJson(doc, body);
+        if (err) {
+            request->send(400, "application/json", "{\"error\":\"invalid json\"}");
+            return;
+        }
+        const char* cmd = doc["cmd"];
+        if (cmd == nullptr) {
+            request->send(400, "application/json", "{\"error\":\"missing cmd\"}");
+            return;
+        }
+        NeoCommandType neoCmd = NEO_CMD_NONE;
+        uint8_t r = 0, g = 0, b = 0;
+        if (strcmp(cmd, "color") == 0) {
+            neoCmd = NEO_CMD_CUSTOM_COLOR;
+            r = doc["r"] | 0;
+            g = doc["g"] | 0;
+            b = doc["b"] | 0;
+        } else if (strcmp(cmd, "auto") == 0) {
+            neoCmd = NEO_CMD_AUTO;
+        } else {
+            request->send(400, "application/json", "{\"error\":\"unknown cmd\"}");
+            return;
+        }
+        if (g_sharedDataPtr == nullptr) {
+            request->send(500, "application/json", "{\"error\":\"server not ready\"}");
+            return;
+        }
+        sendNeoCommand(g_sharedDataPtr, neoCmd, r, g, b);
+        JsonDocument resp;
+        resp["success"] = true;
+        resp["cmd"] = cmd;
+        resp["r"] = r;
+        resp["g"] = g;
+        resp["b"] = b;
+        String respBuf;
+        serializeJson(resp, respBuf);
+        request->send(200, "application/json", respBuf);
+    });
+
     // 404 cho các route không tồn tại
     server.onNotFound([](AsyncWebServerRequest *request)
                       { request->send(404, "text/plain", "Not found"); });
@@ -635,6 +837,9 @@ void sendSensorDataToWebSocket(float temperature, float humidity)
 // SỬA HÀM NÀY: Truyền pvParameters vào cho xTaskCreate
 void InitWebServer(void *pvParameters)
 {
+    // === SET GLOBAL POINTER FOR LED/NEO CONTROL ===
+    g_sharedDataPtr = (SensorData*)pvParameters;
+    
     xTaskCreate(webServerTask, "WebServerTask", 20000, pvParameters, 1, NULL);
     xTaskCreate(webSocketTask, "WebSocketTask", 10000, pvParameters, 1, NULL);
 }
