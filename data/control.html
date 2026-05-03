@@ -98,6 +98,63 @@
               </p>
             </div>
           </div>
+
+          <!-- LED Control Card -->
+          <div class="col-md-6 col-xl-4">
+            <div
+              class="custom-card d-flex flex-column align-items-center justify-content-center text-center p-5">
+              <div
+                class="icon-shape bg-warning bg-opacity-10 text-warning rounded-circle mb-4"
+                style="width: 80px; height: 80px">
+                <i class="fa-solid fa-lightbulb fs-1" id="ledIcon"></i>
+              </div>
+              <h4 class="fw-bold mb-4">LED</h4>
+              <div class="btn-group mb-3" role="group" aria-label="LED control">
+                <button class="btn btn-outline-success" type="button" id="led-on-btn">
+                  Bật
+                </button>
+                <button class="btn btn-outline-danger" type="button" id="led-off-btn">
+                  Tắt
+                </button>
+                <button class="btn btn-outline-secondary" type="button" id="led-auto-btn">
+                  Auto
+                </button>
+              </div>
+              <p class="text-muted mt-2 fw-semibold" id="ledStatus">
+                Auto
+              </p>
+            </div>
+          </div>
+
+          <!-- Neo LED Control Card -->
+          <div class="col-md-6 col-xl-4">
+            <div
+              class="custom-card d-flex flex-column align-items-center justify-content-center text-center p-5">
+              <div
+                class="icon-shape bg-primary bg-opacity-10 text-primary rounded-circle mb-4"
+                style="width: 80px; height: 80px">
+                <i class="fa-solid fa-circle-half-stroke fs-1" id="neoIcon"></i>
+              </div>
+              <h4 class="fw-bold mb-4">Neo LED</h4>
+              <input
+                class="form-control form-control-color mb-3"
+                type="color"
+                id="neo-color"
+                value="#00ff64"
+                title="Chọn màu Neo LED" />
+              <div class="btn-group mb-3" role="group" aria-label="Neo LED control">
+                <button class="btn btn-outline-primary" type="button" id="neo-color-btn">
+                  Đổi màu
+                </button>
+                <button class="btn btn-outline-secondary" type="button" id="neo-auto-btn">
+                  Auto
+                </button>
+              </div>
+              <p class="text-muted mt-2 fw-semibold" id="neoStatus">
+                Auto
+              </p>
+            </div>
+          </div>
         </div>
       </main>
     </div>
