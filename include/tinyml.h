@@ -4,6 +4,8 @@
 #include <Arduino.h>
 
 #include "dht_anomaly_model.h"
+#include "system_config.h"
+#include "shared_data.h"
 
 #include <TensorFlowLite_ESP32.h>
 #include "tensorflow/lite/micro/all_ops_resolver.h"
@@ -14,5 +16,5 @@
 
 void setupTinyML();
 void tiny_ml_task(void *pvParameters);
-
+void evaluation_task(void *pvParameters);
 #endif

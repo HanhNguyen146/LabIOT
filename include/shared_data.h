@@ -37,6 +37,7 @@ struct SensorData {
     bool manualLedOverride;      // Cờ cho biết có override từ RPC không
     bool manualLedState;         // Trạng thái LED khi override (ON/OFF)
     uint32_t lastManualLedTick;  // Timestamp lần cuối RPC gửi lệnh (timeout 10s)
+    float lastInferenceScore;
 
     SemaphoreHandle_t dataMutex; 
     SemaphoreHandle_t i2cMutex;

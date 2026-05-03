@@ -1,38 +1,44 @@
 #include "tinyml.h"
 #include "shared_data.h"
 
-namespace {
+// === TinyML globals ===
+namespace
+{
     tflite::ErrorReporter *error_reporter = nullptr;
     const tflite::Model *model = nullptr;
     tflite::MicroInterpreter *interpreter = nullptr;
     TfLiteTensor *input = nullptr;
     TfLiteTensor *output = nullptr;
-    
-    // Model MLP của chúng ta rất nhỏ, 4KB RAM là dư sức chạy
-    constexpr int kTensorArenaSize = 4 * 1024; 
+
+    constexpr int kTensorArenaSize = 8 * 1024;
     uint8_t tensor_arena[kTensorArenaSize];
 }
 
-// --- HÀM KHỞI TẠO TENSORFLOW LITE ---
-void setupTinyML() {
-    Serial.println("TensorFlow Lite Init....");
+// === setup ===
+void setupTinyML()
+{
+    Serial.println("TensorFlow Lite Init...");
+
     static tflite::MicroErrorReporter micro_error_reporter;
     error_reporter = &micro_error_reporter;
 
-    model = tflite::GetModel(dht_anomaly_model_tflite); 
-    if (model->version() != TFLITE_SCHEMA_VERSION) {
-        error_reporter->Report("Model provided is schema version %d, not equal to supported version %d.",
-                               model->version(), TFLITE_SCHEMA_VERSION);
+    model = tflite::GetModel(TinyML_model);
+
+    if (model->version() != TFLITE_SCHEMA_VERSION)
+    {
+        error_reporter->Report("Model version mismatch!");
         return;
     }
 
     static tflite::AllOpsResolver resolver;
+
     static tflite::MicroInterpreter static_interpreter(
         model, resolver, tensor_arena, kTensorArenaSize, error_reporter);
+
     interpreter = &static_interpreter;
 
-    TfLiteStatus allocate_status = interpreter->AllocateTensors();
-    if (allocate_status != kTfLiteOk) {
+    if (interpreter->AllocateTensors() != kTfLiteOk)
+    {
         error_reporter->Report("AllocateTensors() failed");
         return;
     }
@@ -40,66 +46,127 @@ void setupTinyML() {
     input = interpreter->input(0);
     output = interpreter->output(0);
 
-    Serial.println("TensorFlow Lite Micro initialized on ESP32.");
+    Serial.println("TinyML model loaded successfully!");
 }
 
-// --- TASK RTOS CHẠY AI (ANOMALY DETECTION) ---
-void tiny_ml_task(void *pvParameters) {
-    SensorData* data = (SensorData*)pvParameters;
-    
-    // Gọi hàm khởi tạo ngay khi Task bắt đầu
+// === RTOS TASK ===
+void tiny_ml_task(void *pvParameters)
+{
+    SensorData *data = (SensorData *)pvParameters;
+
     setupTinyML();
 
-    while (1) {
-        float currentTemp = 0.0f;
-        float currentHum = 0.0f;
+    while (1)
+    {
+        float temp = 0.0f;
+        float hum = 0.0f;
         uint32_t lastUpdate = 0;
 
-        // 1. CHỤP DỮ LIỆU TỪ MUTEX
-        if (xSemaphoreTake(data->dataMutex, pdMS_TO_TICKS(100)) == pdTRUE) {
-            currentTemp = data->temperature;
-            currentHum = data->humidity;
+        if (xSemaphoreTake(data->dataMutex, pdMS_TO_TICKS(100)) == pdTRUE)
+        {
+            temp = data->temperature;
+            hum = data->humidity;
             lastUpdate = data->lastSensorUpdateTick;
             xSemaphoreGive(data->dataMutex);
         }
 
-        // Bỏ qua quá trình suy luận (AI Inference) nếu cảm biến DHT20 đang bị đứt cáp
-        if ((xTaskGetTickCount() - lastUpdate) < pdMS_TO_TICKS(5000)) {
-            
-            // 2. CHUẨN BỊ DỮ LIỆU CHO MẠNG NƠ-RON
-            // Chuẩn hóa (Normalize) tỷ lệ giống hệt lúc train trên Colab
-            input->data.f[0] = currentTemp / 60.0f; 
-            input->data.f[1] = currentHum / 100.0f;
+        // vẫn giữ logic an toàn sensor
+        if ((xTaskGetTickCount() - lastUpdate) < pdMS_TO_TICKS(5000))
+        {
+            float norm_temp = temp / 40.0f;
+            float norm_humi = hum / 100.0f;
 
-            // 3. CHẠY SUY LUẬN
-            TfLiteStatus invoke_status = interpreter->Invoke();
-            
-            if (invoke_status == kTfLiteOk) {
-                // Nhận kết quả từ Layer Output (Sigmoid trả về 0.0 -> 1.0)
-                float anomalyProbability = output->data.f[0];
-                
-                Serial.print("TinyML Anomaly Score: ");
-                Serial.print(anomalyProbability * 100);
-                Serial.println("%");
+            input->data.f[0] = norm_temp;
+            input->data.f[1] = norm_humi;
 
-                // 4. KẾT HỢP TINYML VỚI FSM (GHI ĐÈ TRẠNG THÁI KHẨN CẤP)
-                // Nếu AI đánh giá rủi ro > 65%, lập tức kích hoạt báo động đỏ
-                if (anomalyProbability > 0.65f) {
-                    if (xSemaphoreTake(data->dataMutex, pdMS_TO_TICKS(10)) == pdTRUE) {
-                        data->currentLcdState = LCD_CRITICAL;
-                        xSemaphoreGive(data->dataMutex);
-                        
-                        // Kích hoạt Semaphores để đánh thức màn hình và còi/LED ngay lập tức
-                        xSemaphoreGive(data->lcdUpdateSemaphore); 
-                        xSemaphoreGive(data->tempWarningSemaphore); 
-                    }
-                }
-            } else {
-                Serial.println("Lỗi: TinyML Invoke Failed!");
+            TfLiteStatus status = interpreter->Invoke();
+
+            if (status != kTfLiteOk)
+            {
+                Serial.println("Invoke failed");
+            }
+            else
+            {
+                float last_inference = output->data.f[0];
+
+                // 🔥 GIỮ NGUYÊN FULL SERIAL OUTPUT NHƯ BẢN CŨ
+                Serial.printf(
+                    "[TinyML] Input (scaled): T=%.2f, H=%.2f → Output=%.3f\n",
+                    norm_temp, norm_humi, last_inference);
+
+                if (last_inference > 0.8)
+                    Serial.println("AI dự đoán: Nguy hiểm!");
+                else if (last_inference > 0.6)
+                    Serial.println("AI dự đoán: Cảm giác khó chịu");
+                else
+                    Serial.println("AI dự đoán: Bình thường");
             }
         }
 
-        // Task AI tốn nhiều chu kỳ CPU, chỉ cần quét 5 giây một lần
-        vTaskDelay(pdMS_TO_TICKS(5000));
+        vTaskDelay(pdMS_TO_TICKS(3000));
+    }
+}
+// === TASK TEST / EVALUATION ===
+void evaluation_task(void *pvParameters)
+{
+    SensorData *data = (SensorData *)pvParameters;
+
+    setupTinyML();
+    Serial.println("ESP32 Tester Ready. Waiting for commands");
+
+    while (1)
+    {
+        if (Serial.available() > 0)
+        {
+            String inputStr = Serial.readStringUntil('\n');
+
+            float temp, humi;
+
+            if (sscanf(inputStr.c_str(), "%f,%f", &temp, &humi) == 2)
+            {
+                // === Normalize giống training ===
+                float temp_scaled = temp / 40.0f;
+                float humi_scaled = humi / 100.0f;
+
+                input->data.f[0] = temp_scaled;
+                input->data.f[1] = humi_scaled;
+
+                if (interpreter->Invoke() == kTfLiteOk)
+                {
+                    float score = output->data.f[0];
+
+                    // === LOG GIỐNG BẢN CŨ ===
+                    Serial.printf(
+                        "[EVAL TinyML] T=%.2f H=%.2f → Score=%.3f\n",
+                        temp_scaled, humi_scaled, score);
+
+                    if (score > 0.8f)
+                    {
+                        Serial.println("AI dự đoán: Nguy hiểm!");
+                    }
+                    else if (score > 0.6f)
+                    {
+                        Serial.println("AI dự đoán: Cảm giác khó chịu");
+                    }
+                    else
+                    {
+                        Serial.println("AI dự đoán: Bình thường");
+                    }
+
+                    // === (OPTION) cập nhật vào system nếu cần ===
+                    if (xSemaphoreTake(data->dataMutex, pdMS_TO_TICKS(10)) == pdTRUE)
+                    {
+                        data->lastInferenceScore = score;   // nếu bạn có field này
+                        xSemaphoreGive(data->dataMutex);
+                    }
+                }
+                else
+                {
+                    Serial.println("Invoke failed");
+                }
+            }
+        }
+
+        vTaskDelay(pdMS_TO_TICKS(10));
     }
 }
