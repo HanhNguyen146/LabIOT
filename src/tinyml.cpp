@@ -89,6 +89,12 @@ void tiny_ml_task(void *pvParameters)
             {
                 float last_inference = output->data.f[0];
 
+                if (xSemaphoreTake(data->dataMutex, pdMS_TO_TICKS(10)) == pdTRUE)
+                {
+                    data->lastInferenceScore = last_inference;
+                    xSemaphoreGive(data->dataMutex);
+                }
+
                 // 🔥 GIỮ NGUYÊN FULL SERIAL OUTPUT NHƯ BẢN CŨ
                 Serial.printf(
                     "[TinyML] Input (scaled): T=%.2f, H=%.2f → Output=%.3f\n",
