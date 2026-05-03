@@ -15,6 +15,9 @@ ws.onmessage = function(event) {
 			if (typeof msg.humidity !== 'undefined') {
 				document.getElementById('humidity-value').textContent = msg.humidity.toFixed(1);
 			}
+			if (typeof msg.inferenceScore !== 'undefined') {
+				document.getElementById('inference-score-value').textContent = msg.inferenceScore.toFixed(3);
+			}
 		}
 	} catch (e) {
 		// Không phải JSON hợp lệ hoặc không phải dữ liệu cảm biến
