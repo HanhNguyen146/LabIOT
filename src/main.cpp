@@ -80,22 +80,38 @@ void setup()
     sharedData->manualLedOverride = false;
     sharedData->manualLedState = false;
     sharedData->lastManualLedTick = 0;
+    sharedData->lastInferenceScore = 0.0f;
     // ---
+
+    // === KHỞI TẠO SERVER CONTROL COMMAND ===
+    sharedData->ledCommand.type = LED_CMD_NONE;
+    sharedData->ledCommand.timestamp = 0;
+    sharedData->neoCommand.type = NEO_CMD_NONE;
+    sharedData->neoCommand.r = 0;
+    sharedData->neoCommand.g = 0;
+    sharedData->neoCommand.b = 0;
+    sharedData->neoCommand.timestamp = 0;
+    // ===
 
     sharedData->dataMutex = xSemaphoreCreateMutex();
     sharedData->i2cMutex = xSemaphoreCreateMutex();
     sharedData->tempWarningSemaphore = xSemaphoreCreateBinary();
     sharedData->lcdUpdateSemaphore = xSemaphoreCreateBinary();
+    sharedData->ledCommandSemaphore = xSemaphoreCreateBinary();    // NEW: Server priority for LED
+    sharedData->neoCommandSemaphore = xSemaphoreCreateBinary();    // NEW: Server priority for NEO
     // sharedData->tinymlInputQueue = xQueueCreate(1, sizeof(TinyMLInputSample));
 
-    if (sharedData->dataMutex != NULL && sharedData->i2cMutex != NULL) {
+    if (sharedData->dataMutex != NULL && sharedData->i2cMutex != NULL && 
+        sharedData->ledCommandSemaphore != NULL && sharedData->neoCommandSemaphore != NULL) {
         xTaskCreate(Task_Toogle_BOOT, "Task_Toogle_BOOT", 4096, NULL, 2, NULL);
         // Task Sensor (Ưu tiên cao nhất để không lỡ nhịp dữ liệu)
         xTaskCreate(TaskSensor, "Sensor_Task", 4096, (void*)sharedData, 4, NULL);
         
-        // Các Task điều khiển phần cứng (Ưu tiên trung bình)
-        xTaskCreate(TaskLEDControl, "LED_Task", 2048, (void*)sharedData, 3, NULL);
-        xTaskCreate(neo_blinky, "NeoPixel_Task", 2048, (void*)sharedData, 3, NULL);
+        // Các Task điều khiển phần cứng (Ưu tiên trung bình) - LƯU HANDLE
+        TaskHandle_t ledTaskHandle = NULL;
+        TaskHandle_t neoTaskHandle = NULL;
+        xTaskCreate(TaskLEDControl, "LED_Task", 2048, (void*)sharedData, 3, &ledTaskHandle);
+        xTaskCreate(neo_blinky, "NeoPixel_Task", 2048, (void*)sharedData, 3, &neoTaskHandle);
         xTaskCreate(TaskLCD, "LCD_Task", 4096, (void*)sharedData, 3, NULL);
         
         // --- THÊM TASK 5: TINYML ANOMALY DETECTION ---
