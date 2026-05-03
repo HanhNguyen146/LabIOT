@@ -790,6 +790,7 @@ void webSocketTask(void *pvParameters) {
         {
             float temp = 0.0f;
             float hum = 0.0f;
+            float inferenceScore = 0.0f;
             bool newDataAvailable = false;
 
             // Xin cấp quyền Mutex tối đa 100 Ticks để không chặn luồng Web quá lâu
@@ -797,6 +798,7 @@ void webSocketTask(void *pvParameters) {
             {
                 temp = data->temperature;
                 hum = data->humidity;
+                inferenceScore = data->lastInferenceScore;
                 newDataAvailable = true;
                 
                 // Nhả Mutex ngay lập tức sau khi sao chép xong
@@ -806,7 +808,7 @@ void webSocketTask(void *pvParameters) {
             // Chỉ gửi WebSocket khi lấy được dữ liệu thành công
             if (newDataAvailable) 
             {
-                sendSensorDataToWebSocket(temp, hum);
+                sendSensorDataToWebSocket(temp, hum, inferenceScore);
             }
             
             lastWebUpdate = xTaskGetTickCount();
@@ -823,6 +825,19 @@ void sendWebSocketMessage(String message)
 }
 
 // Hàm gửi dữ liệu cảm biến lên WebSocket cho dashboard
+void sendSensorDataToWebSocket(float temperature, float humidity, float inferenceScore)
+{
+    JsonDocument doc;
+    doc["type"] = "sensor";
+    doc["temperature"] = temperature;
+    doc["humidity"] = humidity;
+    doc["inferenceScore"] = inferenceScore;
+    doc["lastInferenceScore"] = inferenceScore;
+    String jsonBuffer;
+    serializeJson(doc, jsonBuffer);
+    sendWebSocketMessage(jsonBuffer);
+}
+
 void sendSensorDataToWebSocket(float temperature, float humidity)
 {
     JsonDocument doc;
