@@ -1,8 +1,6 @@
 {
   "idf.portWin": "COM5",
-  "idf.openOcdConfigs": [
-    "board/esp32s3-bridge.cfg"
-  ],
+  "idf.openOcdConfigs": ["board/esp32s3-bridge.cfg"],
   "idf.currentSetup": "c:\\Users\\thuan\\v5.5.1\\esp-idf",
   "liveServer.settings.port": 5504,
   "C_Cpp_Runner.msvcBatchPath": "C:/Program Files/Microsoft Visual Studio/2022/Community/VC/Auxiliary/Build/vcvarsall.bat",
@@ -44,10 +42,7 @@
   "C_Cpp_Runner.compilerArgs": [],
   "C_Cpp_Runner.linkerArgs": [],
   "C_Cpp_Runner.includePaths": [],
-  "C_Cpp_Runner.includeSearch": [
-    "*",
-    "**/*"
-  ],
+  "C_Cpp_Runner.includeSearch": ["*", "**/*"],
   "C_Cpp_Runner.excludeSearch": [
     "**/build",
     "**/build/**",
@@ -61,5 +56,6 @@
   "C_Cpp_Runner.useLeakSanitizer": false,
   "C_Cpp_Runner.showCompilationTime": false,
   "C_Cpp_Runner.useLinkTimeOptimization": false,
-  "C_Cpp_Runner.msvcSecureNoWarnings": false
+  "C_Cpp_Runner.msvcSecureNoWarnings": false,
+  "cmake.sourceDirectory": "C:/Hanh/GITHUB/LabIOT/lib/ArduinoJson/src"
 }
