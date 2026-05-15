@@ -1,0 +1,7 @@
+adafruit/Adafruit NeoPixel@^1.15.4
+locple/LiquidCrystal I2C Multilingual@^2.0.2
+PubSubClient
+tanakamasayuki/TensorFlowLite_ESP32@1.0.0
+https://github.com/me-no-dev/ESPAsyncWebServer.git
+robtillaart/DHT20@^0.3.2
+bblanchon/ArduinoJson@^7.2.2
