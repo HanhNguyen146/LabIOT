@@ -5,7 +5,7 @@ import json
 
 BROKER_ADDRESS = "app.coreiot.io"
 PORT = 1883
-ACCESS_TOKEN = "zhbZ4lmpduD3T8h64M2H"
+ACCESS_TOKEN = "fkmi5CM47yDH40nm1wDp"
 ACCESS_USERNAME = "dv_1"
 
 def subscribed(client, userdata, mid, granted_qos):
